@@ -1,0 +1,10 @@
+[run]
+# This ignores the main.py file entirely
+omit =
+    src/main.py
+
+[report]
+# This ignores specific lines inside other files
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:

@@ -65,3 +65,33 @@ def load_into_db(df):
         conn.rollback()
     finally:
         conn.close()
+
+
+def load_errors(bad_df, reason="Validation Failed"):
+    logger = logging.getLogger(__name__)
+    conn = get_connection()
+
+    if bad_df.empty:
+        logger.info("No errors to report.")
+        conn.close()
+        return
+
+    try:
+        with conn.cursor() as cur:
+            data_values = []
+
+            for _, row in bad_df.iterrows():
+                row_json = row.to_json()
+                data_values.append((row_json, reason))
+
+            insert_query = "INSERT INTO salary_errors (payload, reason) VALUES (%s, %s)"
+            cur.executemany(insert_query, data_values)
+
+            conn.commit()
+            logger.info(f"Loaded {len(bad_df)} rejected rows into salary_errors table.")
+
+    except Exception as e:
+        logger.exception(f"Failed to load errors: {e}")
+        conn.rollback()
+    finally:
+        conn.close()

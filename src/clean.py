@@ -1,11 +1,9 @@
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
 import pandas as pd
-from readers.csv_reader import read_csv
 import country_converter as coco
+import us  # <-- New library
+
 
 def clean(df):
-
     rename_columns = {
         "How old are you?": "age",
         "What industry do you work in?": "industry",
@@ -19,21 +17,24 @@ def clean(df):
         "If you're in the U.S., what state do you work in?": "us_state",
         "What city do you work in?": "city"
     }
-
     df = df.rename(columns=rename_columns)
-    salary_column = 'salary'
-    bonus_column = 'bonus'
 
-    df[salary_column] = df[salary_column].replace(',', '')
-    df[salary_column] = pd.to_numeric(df[salary_column], errors="coerce")
-    df[salary_column] = df[salary_column].fillna(0).astype(int)
+    text_cols = ['industry', 'job_title', 'city', 'currency', 'us_state']
 
-    df[bonus_column] = df[bonus_column].replace(',', '')
-    df[bonus_column] = pd.to_numeric(df[bonus_column], errors="coerce")
-    df[bonus_column] = df[bonus_column].fillna(0).astype(int)
+    for col in text_cols:
+        df[col] = df[col].astype(str).str.strip()
+        df[col] = df[col].replace({'nan': None, 'None': None, '': None})
 
-    # df[bonus_column] = df['']
+    df['job_title'] = df['job_title'].str.title()
+    df['city'] = df['city'].str.title()
+    df['currency'] = df['currency'].str.upper()
 
+    money_cols = ['salary', 'bonus']
+    for col in money_cols:
+        df[col] = df[col].astype(str).str.replace(r'[$,]', '', regex=True)
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+
+    df['age'] = df['age'].replace("under 18", "17")
     df['age'] = df['age'].astype(str).str.extract(r'^(\d+)').fillna(0).astype(int)
 
     cc = coco.CountryConverter()
@@ -42,32 +43,14 @@ def clean(df):
     df = df.dropna(subset=['country'])
     df = df[df['country'].astype(str).str.match(r'^[A-Z]{3}$')]
 
+    def standardize_us_state(val):
+        if not val:
+            return None
+        state = us.states.lookup(str(val))
+        return state.abbr if state else val.upper()
+
+    df['us_state'] = df['us_state'].apply(standardize_us_state)
+
+    df = df.reset_index(drop=True)
 
     return df
-
-
-# job_titles = [
-#     'Director',
-#     'Manager',
-#     'Engineer',
-#     'Analyst',
-#     'Assistant',
-#
-# ]
-#
-# # job_titles = df['Job title']
-#
-# vectorizer = TfidfVectorizer(stop_words='english')
-#
-# X = vectorizer.fit_transform(job_titles)
-#
-# K = 20
-#
-# kmeans = KMeans(n_clusters=K, random_state=42, n_init='auto')
-#
-# kmeans.fit(X)
-#
-# clusters = kmeans.labels_
-#
-# for title, cluster in sorted(zip(job_titles, clusters), key=lambda x: x[1]):
-#     print(f"'{title}' -> Cluster {cluster}")

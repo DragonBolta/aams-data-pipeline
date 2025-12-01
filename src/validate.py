@@ -2,9 +2,6 @@ import logging
 import great_expectations as gx
 import pandas as pd
 
-from src.clean import clean
-from src.readers.csv_reader import read_csv
-
 
 def validate(df):
     log = logging.getLogger(__name__)
@@ -12,15 +9,39 @@ def validate(df):
     context = gx.get_context()
     data_source = context.data_sources.add_pandas("ask_a_manager_src")
     data_asset = data_source.add_dataframe_asset("survey_responses_raw")
+
     batch_definition = data_asset.add_batch_definition_whole_dataframe("whole_dataframe")
     batch = batch_definition.get_batch(batch_parameters={"dataframe": df})
 
-    salary_column = 'Salary'
+    suite = context.suites.add(gx.ExpectationSuite(name="salary_survey_schema_and_logic"))
 
-    df[salary_column] = df[salary_column].replace(',', '')
-    df[salary_column] = pd.to_numeric(df[salary_column], errors="coerce")
+    full_schema = {
+        "job_context": {"type": "object", "max_len": 255},
+        "industry": {"type": "object", "max_len": 50},
+        "job_title": {"type": "object", "max_len": 100},
+        "currency": {"type": "object", "max_len": 7},
+        "income_text": {"type": "object", "max_len": 100},
+        "country": {"type": "object", "max_len": 3},
+        "us_state": {"type": "object", "max_len": 27},
+        "city": {"type": "object", "max_len": 52},
+        "age": {"type": "int64", "max_len": None},
+        "salary": {"type": "int64", "max_len": None},
+        "bonus": {"type": "int64", "max_len": None},
+    }
 
-    suite = context.suites.add(gx.ExpectationSuite(name="salary_survey_cleaning"))
+    for col, rules in full_schema.items():
+        suite.add_expectation(gx.expectations.ExpectColumnToExist(column=col))
+
+        suite.add_expectation(
+            gx.expectations.ExpectColumnValuesToBeOfType(column=col, type_=rules["type"])
+        )
+
+        if rules["max_len"]:
+            suite.add_expectation(
+                gx.expectations.ExpectColumnValueLengthsToBeBetween(
+                    column=col, min_value=0, max_value=rules["max_len"]
+                )
+            )
 
     suite.add_expectation(
         gx.expectations.ExpectColumnValuesToNotBeNull(column="job_title")
@@ -29,23 +50,39 @@ def validate(df):
     suite.add_expectation(
         gx.expectations.ExpectColumnValuesToNotBeNull(column="salary")
     )
-
     suite.add_expectation(
         gx.expectations.ExpectColumnValuesToBeBetween(
-            column=salary_column,
-            min_value=10000,
-            max_value=1000000
+            column="salary",
+            min_value=10_000,
+            max_value=1_000_000
         )
     )
 
     suite.add_expectation(
         gx.expectations.ExpectColumnValuesToBeInSet(
-            column="Please indicate the currency",
+            column="currency",
             value_set=["USD", "CAD", "GBP", "EUR", "AUD/NZD"]
         )
     )
 
-    # suite.add_expectation
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToBeBetween(
+            column="age",
+            min_value=18,
+            max_value=100
+        )
+    )
+
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToMatchRegex(
+            column="country",
+            regex=r"^[A-Z]{3}$"
+        )
+    )
+
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToNotBeNull(column="industry")
+    )
 
     validation_results = batch.validate(suite, result_format={"result_format": "COMPLETE"})
 
@@ -55,10 +92,8 @@ def validate(df):
         if not result.success:
             indices = result.result.get("unexpected_index_list", [])
             unexpected_indices.update(indices)
-
-            log.warning(f"Expectation '{result.expectation_config.type}' failed on {len(indices)} rows.")
-        # else:
-        #     indices = result.result.get()
+            log.warning(
+                f"Expectation '{result.expectation_config.type}' on column '{result.expectation_config.kwargs.get('column')}' failed on {len(indices)} rows.")
 
     bad_index_list = list(unexpected_indices)
 
@@ -73,6 +108,9 @@ def validate(df):
 
 
 if __name__ == "__main__":
+    from src.readers.csv_reader import read_csv
+    from src.clean import clean
+
     df = read_csv(filepath="../data/Ask A Manager Salary Survey 2021 (Responses) - Form Responses 1.csv")
     cleaned_df = clean(df)
     good, bad = validate(cleaned_df)
