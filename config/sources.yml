@@ -1,0 +1,29 @@
+defaults:
+  batch_size: 5000
+  on_conflict: upsert
+sources:
+  - name: salaries_csv
+    type: csv
+    target_table: salaries
+    pk: [response_id]
+    schema:
+      response_id: int
+      age: int
+      industry: str
+      job: str
+      job_context: str
+      salary: int
+      bonus: int
+      currency: str
+      income_context: str
+      country: str
+      state: str
+      city: str
+      any_exp: int
+      relevant_exp: int
+      education: str
+      gender: str
+      race: str
+    rules:
+      - rule: "salary NOT NULL"
+      - rule: "job NOT NULL"
