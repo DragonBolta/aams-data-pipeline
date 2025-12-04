@@ -1,6 +1,7 @@
 import pandas as pd
 import country_converter as coco
 import us
+import numpy as np
 
 
 def standardize_us_state(val):
@@ -92,26 +93,14 @@ def clean(df):
     cc = coco.CountryConverter()
 
     index_before = df.index
-    df['country'] = cc.pandas_convert(series=df['country'], to='ISO3', not_found=None)
+    df['country'] = cc.pandas_convert(series=df['country'], to='ISO3', not_found=np.nan)
     df_after = df.dropna(subset=['country'])
     index_after = df_after.index
 
     dropped_indices = index_before.difference(index_after)
     if not dropped_indices.empty:
         dropped_df = df.loc[dropped_indices].copy()
-        dropped_df['drop_reason'] = 'Country Conversion Failed (ISO3=None)'
-        dropped_dataframes_list.append(dropped_df)
-
-    df = df_after
-
-    index_before = df.index
-    df_after = df[df['country'].astype(str).str.match(r'^[A-Z]{3}$')]
-    index_after = df_after.index
-
-    dropped_indices = index_before.difference(index_after)
-    if not dropped_indices.empty:
-        dropped_df = df.loc[dropped_indices].copy()
-        dropped_df['drop_reason'] = 'Country Code Not ISO3 Format'
+        dropped_df['drop_reason'] = 'Country Conversion Failed (ISO3=NaN)'
         dropped_dataframes_list.append(dropped_df)
 
     df = df_after
