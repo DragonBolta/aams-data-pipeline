@@ -31,7 +31,9 @@ def load_into_db(df):
 
     target_cols = [
         "age", "industry", "job_title", "job_context",
-        "salary", "bonus", "currency", "country", "us_state", "city"
+        "salary", "bonus", "currency", "income_context",
+        "country", "us_state", "city", "professional_yoe",
+        "industry_yoe", "gender", "education"
     ]
 
     valid_cols = [c for c in target_cols if c in df.columns]
@@ -76,13 +78,22 @@ def load_errors(bad_df, reason="Validation Failed"):
         conn.close()
         return
 
+    has_reason_column = 'drop_reason' in bad_df.columns
+
     try:
         with conn.cursor() as cur:
             data_values = []
 
             for _, row in bad_df.iterrows():
-                row_json = row.to_json()
-                data_values.append((row_json, reason))
+                if has_reason_column:
+                    error_reason = row['drop_reason']
+                    payload_data = row.drop(labels=['drop_reason'])
+                else:
+                    error_reason = reason
+                    payload_data = row
+
+                row_json = payload_data.to_json()
+                data_values.append((row_json, error_reason))
 
             insert_query = "INSERT INTO salary_errors (payload, reason) VALUES (%s, %s)"
             cur.executemany(insert_query, data_values)

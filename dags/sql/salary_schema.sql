@@ -1,4 +1,5 @@
 CREATE TABLE IF NOT EXISTS salary (
+    year INT,
     age INT,
     industry varchar(50),
     job_title varchar(100),
@@ -6,11 +7,21 @@ CREATE TABLE IF NOT EXISTS salary (
     salary INT,
     bonus INT,
     currency VARCHAR(7),
-    income_text VARCHAR(100),
+    income_context VARCHAR(100),
     country VARCHAR(3),
     us_state VARCHAR(27),
-    city varchar(52)
+    city varchar(52),
+    gender varchar(30),
+    professional_yoe INT,
+    industry_yoe INT,
+    education varchar(40)
 );
+
+-- CREATE TABLE IF NOT EXISTS countries (
+--     country_id INT PRIMARY KEY,
+--     country_name INT,
+--     country_iso INT
+-- );
 
 CREATE TABLE IF NOT EXISTS salary_errors (
     error_id SERIAL PRIMARY KEY,

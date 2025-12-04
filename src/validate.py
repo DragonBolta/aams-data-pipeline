@@ -20,10 +20,11 @@ def validate(df):
         "industry": {"type": "object", "max_len": 50},
         "job_title": {"type": "object", "max_len": 100},
         "currency": {"type": "object", "max_len": 7},
-        "income_text": {"type": "object", "max_len": 100},
+        "income_context": {"type": "object", "max_len": 100},
         "country": {"type": "object", "max_len": 3},
         "us_state": {"type": "object", "max_len": 27},
         "city": {"type": "object", "max_len": 52},
+        "year": {"type": "int64", "max_len": None},
         "age": {"type": "int64", "max_len": None},
         "salary": {"type": "int64", "max_len": None},
         "bonus": {"type": "int64", "max_len": None},
@@ -59,6 +60,14 @@ def validate(df):
     )
 
     suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToBeBetween(
+            column="year",
+            min_value=2015,
+            max_value=2030
+        )
+    )
+
+    suite.add_expectation(
         gx.expectations.ExpectColumnValuesToBeInSet(
             column="currency",
             value_set=["USD", "CAD", "GBP", "EUR", "AUD/NZD"]
@@ -82,6 +91,18 @@ def validate(df):
 
     suite.add_expectation(
         gx.expectations.ExpectColumnValuesToNotBeNull(column="industry")
+    )
+
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToNotBeInSet(column="currency", value_set=["Other"])
+    )
+
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToNotBeNull(column="professional_yoe")
+    )
+
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToNotBeNull(column="industry_yoe")
     )
 
     validation_results = batch.validate(suite, result_format={"result_format": "COMPLETE"})
