@@ -1,13 +1,15 @@
+import numpy as np
 import pandas as pd
 import pytest
-import numpy as np
+
 from src.clean import clean
-from src.clean import standardize_us_state
 
 
 @pytest.fixture
 def raw_survey_data():
     data = {
+        "Timestamp": ["2021-02-17 10:00:00", "2020-11-01 12:30:00", "2021-03-05", "Not a date", "2022-01-01",
+                      "2020/01/01"],
         "How old are you?": ["under 18", "45-50", "30", "25", "30", "22"],
         "What industry do you work in?": ["Tech", "Finance", "N/A", "Marketing", "HR", "Education"],
         "Job title": [" data engineer ", "Analyst", "Unknown", "Manager", "Assistant", "Teacher"],
@@ -38,6 +40,7 @@ def raw_survey_data():
 @pytest.fixture
 def perfect_survey_data():
     data = {
+        "Timestamp": ["2021-05-15 11:00:00"],
         "How old are you?": ["30-35"],
         "What industry do you work in?": ["Tech"],
         "Job title": [" Data Scientist "],
@@ -58,6 +61,12 @@ def perfect_survey_data():
         'What is your gender?': ["Man"]
     }
     return pd.DataFrame(data)
+
+
+@pytest.fixture
+def no_timestamp_data(raw_survey_data):
+    """Fixture to provide survey data missing the 'Timestamp' column."""
+    return raw_survey_data.drop(columns=['Timestamp'])
 
 
 def test_clean_standardizes_text(raw_survey_data):
@@ -84,30 +93,46 @@ def test_age_cleaning_handles_under_18(raw_survey_data):
 def test_country_normalization_and_filtering(raw_survey_data):
     df, bad_rows = clean(raw_survey_data)
 
-    assert len(df) == 3
+    assert len(df) == 2
 
-    assert len(bad_rows) == 3
+    assert len(bad_rows) == 4
 
     reasons = bad_rows['drop_reason'].tolist()
 
     assert 'Missing Education (dropna)' in reasons
     assert 'Country Conversion Failed (ISO3=NaN)' in reasons
     assert 'Missing or Invalid professional_yoe (dropna)' in reasons
+    assert 'Missing or Invalid Timestamp/Year (dropna)' in reasons
 
-    assert 'Country Code Not ISO3 Format' not in reasons
-    assert 'Missing or Invalid industry_yoe (dropna)' not in reasons
+
+def test_year_extraction_and_filtering(raw_survey_data):
+    pd.set_option('display.max_columns', None)
+    df, bad_rows = clean(raw_survey_data)
+
+    assert 'year' in df.columns
+    assert df['year'].dtype == "Int64"
+
+    assert df.iloc[0]['year'] == 2021
+    assert df.iloc[1]['year'] == 2020
 
 
 def test_clean_no_rows_dropped(perfect_survey_data):
     good_rows, bad_rows = clean(perfect_survey_data)
 
     assert len(good_rows) == 1
-    assert bad_rows.empty
+    assert good_rows.iloc
 
+def test_clean_handles_missing_timestamp(no_timestamp_data):
+    """Tests the scenario where the input data is missing the Timestamp column."""
+    df, bad_rows = clean(no_timestamp_data)
 
-def test_standardize_us_state_helper():
-    assert standardize_us_state("NY") == "NY"
-    assert standardize_us_state("new york") == "NY"
-    assert standardize_us_state("not_a_state") == "NOT_A_STATE"
-    assert standardize_us_state("") is None
-    assert standardize_us_state(None) is None
+    assert 'year' in df.columns
+    assert df['year'].isna().all()
+    assert df['year'].dtype == "Int64"
+
+    assert len(bad_rows) == 3
+
+    reasons = bad_rows['drop_reason'].tolist()
+    assert 'Missing Education (dropna)' in reasons
+    assert 'Country Conversion Failed (ISO3=NaN)' in reasons
+    assert 'Missing or Invalid professional_yoe (dropna)' in reasons

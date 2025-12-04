@@ -14,6 +14,7 @@ def test_load_into_db_success(mock_connect):
     mock_conn_instance.cursor.return_value.__enter__.return_value = mock_cursor
 
     df = pd.DataFrame({
+        "year": [2021],
         "age": [30],
         "industry": ["Tech"],
         "job_title": ["Engineer"],
@@ -42,6 +43,7 @@ def test_load_into_db_success(mock_connect):
     assert "FROM STDIN" in sql_query
 
     target_cols = [
+        "year",
         "age", "industry", "job_title", "job_context",
         "salary", "bonus", "currency", "income_context",
         "country", "us_state", "city", "professional_yoe",

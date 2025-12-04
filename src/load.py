@@ -30,6 +30,7 @@ def load_into_db(df):
     conn = get_connection()
 
     target_cols = [
+        "year",
         "age", "industry", "job_title", "job_context",
         "salary", "bonus", "currency", "income_context",
         "country", "us_state", "city", "professional_yoe",

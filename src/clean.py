@@ -12,9 +12,12 @@ def standardize_us_state(val):
 
 
 def clean(df):
-    dropped_dataframes_list = []
+    df = df.copy()
+    df['drop_reason'] = np.nan
+    df['drop_reason'] = df['drop_reason'].astype(object)
 
     rename_columns = {
+        "Timestamp": "response_timestamp",
         "How old are you?": "age",
         "What industry do you work in?": "industry",
         "Job title": "job_title",
@@ -29,12 +32,54 @@ def clean(df):
         "How many years of professional work experience do you have overall?": "professional_yoe",
         "How many years of professional work experience do you have in your field?": "industry_yoe",
         "What is your highest level of education completed?": "education",
-        "What is your race? (Choose all that apply.)": "race",
+        'What is your race? (Choose all that apply.)': "race",
         'What is your gender?': "gender"
     }
     df = df.rename(columns=rename_columns)
 
-    text_cols = ['industry', 'job_title', 'city', 'currency', 'income_context', 'country', 'us_state']
+    cc = coco.CountryConverter()
+    df['country'] = cc.pandas_convert(series=df['country'], to='ISO3', not_found=np.nan)
+
+    country_fail_mask = df['country'].isna()
+    df.loc[country_fail_mask & df['drop_reason'].isna(), 'drop_reason'] = 'Country Conversion Failed (ISO3=NaN)'
+
+    education_fail_mask = df['education'].isna()
+    df.loc[education_fail_mask & df['drop_reason'].isna(), 'drop_reason'] = 'Missing Education (dropna)'
+
+    yoe_cols = ['professional_yoe', 'industry_yoe']
+    yoe_bands = {
+        '1 year or less': 0,
+        '2 - 4 years': 2,
+        '5 - 7 years': 5,
+        '8 - 10 years': 8,
+        '11 - 20 years': 11,
+        '21 - 30 years': 21
+    }
+
+    for col in yoe_cols:
+        original_values = df[col].copy()
+        df[col] = original_values.map(yoe_bands)
+
+        yoe_fail_mask = df[col].isna() & original_values.notna()
+
+        df.loc[yoe_fail_mask & df['drop_reason'].isna(), 'drop_reason'] = f'Missing or Invalid {col} (dropna)'
+
+    df['professional_yoe'] = df['professional_yoe'].astype('Int64')
+    df['industry_yoe'] = df['industry_yoe'].astype('Int64')
+
+    if 'response_timestamp' in df.columns:
+        df['response_timestamp'] = pd.to_datetime(df['response_timestamp'], errors='coerce')
+        df['year'] = df['response_timestamp'].dt.year
+        df['year'] = df['year'].astype('Int64')
+
+        timestamp_fail_mask = df['response_timestamp'].isna()
+        df.loc[timestamp_fail_mask & df[
+            'drop_reason'].isna(), 'drop_reason'] = 'Missing or Invalid Timestamp/Year (dropna)'
+
+    else:
+        df['year'] = pd.Series([pd.NA] * len(df), dtype="Int64")
+
+    text_cols = ['industry', 'job_title', 'city', 'currency', 'income_context', 'us_state']
 
     for col in text_cols:
         df[col] = df[col].astype(str).str.strip()
@@ -52,66 +97,13 @@ def clean(df):
     df['age'] = df['age'].replace("under 18", "17")
     df['age'] = df['age'].astype(str).str.extract(r'^(\d+)').fillna(0).astype(int)
 
-    yoe_cols = ['professional_yoe', 'industry_yoe']
-    yoe_bands = {
-        '1 year or less': 0,
-        '2 - 4 years': 2,
-        '5 - 7 years': 5,
-        '8 - 10 years': 8,
-        '11 - 20 years': 11,
-        '21 - 30 years': 21
-    }
-
-    for col in yoe_cols:
-        df[col] = df[col].map(yoe_bands)
-
-        index_before = df.index
-        df_after = df.dropna(subset=[col])
-        index_after = df_after.index
-
-        dropped_indices = index_before.difference(index_after)
-        if not dropped_indices.empty:
-            dropped_df = df.loc[dropped_indices].copy()
-            dropped_df['drop_reason'] = f'Missing or Invalid {col} (dropna)'
-            dropped_dataframes_list.append(dropped_df)
-
-        df = df_after
-        df[col] = df[col].astype(int)
-
-    index_before = df.index
-    df_after = df.dropna(subset=["education"])
-    index_after = df_after.index
-
-    dropped_indices = index_before.difference(index_after)
-    if not dropped_indices.empty:
-        dropped_df = df.loc[dropped_indices].copy()
-        dropped_df['drop_reason'] = 'Missing Education (dropna)'
-        dropped_dataframes_list.append(dropped_df)
-
-    df = df_after
-
-    cc = coco.CountryConverter()
-
-    index_before = df.index
-    df['country'] = cc.pandas_convert(series=df['country'], to='ISO3', not_found=np.nan)
-    df_after = df.dropna(subset=['country'])
-    index_after = df_after.index
-
-    dropped_indices = index_before.difference(index_after)
-    if not dropped_indices.empty:
-        dropped_df = df.loc[dropped_indices].copy()
-        dropped_df['drop_reason'] = 'Country Conversion Failed (ISO3=NaN)'
-        dropped_dataframes_list.append(dropped_df)
-
-    df = df_after
-
     df['us_state'] = df['us_state'].apply(standardize_us_state)
 
-    if dropped_dataframes_list:
-        final_dropped_df = pd.concat(dropped_dataframes_list)
-    else:
-        final_dropped_df = pd.DataFrame()
+    bad_rows = df[df['drop_reason'].notna()].copy()
+    good_rows = df[df['drop_reason'].isna()].copy()
 
-    df = df.reset_index(drop=True)
+    good_rows = good_rows.drop(columns=['drop_reason'])
 
-    return df, final_dropped_df
+    good_rows = good_rows.reset_index(drop=True)
+
+    return good_rows, bad_rows
