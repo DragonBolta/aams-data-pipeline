@@ -6,6 +6,10 @@ import pandas as pd
 def validate(df):
     log = logging.getLogger(__name__)
 
+    expectations_logger = logging.getLogger("great_expectations.expectations.expectation")
+
+    expectations_logger.setLevel(logging.WARNING)
+
     context = gx.get_context()
     data_source = context.data_sources.add_pandas("ask_a_manager_src")
     data_asset = data_source.add_dataframe_asset("survey_responses_raw")
