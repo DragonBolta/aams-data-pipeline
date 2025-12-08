@@ -11,8 +11,9 @@ def etl(df):
 
     good_rows, bad_rows = validate(good_rows)
 
-    print(f"Loading {len(good_rows)} valid rows...")
-    load_into_db(good_rows)
+    if not good_rows.empty:
+        print(f"Loading {len(good_rows)} valid rows...")
+        load_into_db(good_rows)
 
     if not bad_rows.empty:
         print(f"Capturing {len(bad_rows)} invalid rows (Schema/Validation Mismatch)...")

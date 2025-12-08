@@ -2,31 +2,73 @@ import logging
 import psycopg2 as pg
 import os
 import io
-from dotenv import load_dotenv
+import json
+import pandas as pd
+import numpy as np
 
-load_dotenv()
-
-pg_ip = os.getenv("PG_IP")
-pg_port = os.getenv("PG_PORT")
-pg_user = os.getenv("PG_USER")
-pg_pw = os.getenv("PG_PASSWORD")
-pg_db = os.getenv("PG_DB")
+logger = logging.getLogger(__name__)
 
 
-def get_connection():
-    conn = pg.connect(
+def get_secret(secret_name):
+    secret_path = os.path.join('/run/secrets', secret_name)
+    try:
+        with open(secret_path, 'r') as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        print(f"ERROR: Docker secret '{secret_name}' not found at {secret_path}")
+        return None
+    except Exception as e:
+        print(f"ERROR reading secret '{secret_name}': {e}")
+        return None
+
+
+pg_ip = os.getenv("POSTGRES_IP")
+pg_port = os.getenv("POSTGRES_PORT")
+pg_user = os.getenv("POSTGRES_USER")
+pg_db = os.getenv("POSTGRES_DB")
+pg_pw = get_secret("db_password")
+
+
+def _connect_db():
+    return pg.connect(
         host=pg_ip,
         port=pg_port,
         database=pg_db,
         user=pg_user,
         password=pg_pw,
     )
-    conn.autocommit = True
+
+
+def setup_db_schema():
+    conn = None
+    try:
+        conn = _connect_db()
+        conn.autocommit = True
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        schema_path = os.path.join(current_dir, "../dags/sql/salary_schema.sql")
+
+        with conn.cursor() as cur:
+            with open(schema_path, "r") as f:
+                cur.execute(f.read())
+        logger.info("Database schema initialized successfully.")
+
+    except Exception as e:
+        logger.exception(f"Database schema initialization failed: {e}")
+        if conn and not conn.closed:
+            conn.rollback()
+    finally:
+        if conn and not conn.closed:
+            conn.close()
+
+
+def get_connection():
+    conn = _connect_db()
+    conn.autocommit = False
     return conn
 
 
 def load_into_db(df):
-    logger = logging.getLogger(__name__)
     conn = get_connection()
 
     target_cols = [
@@ -40,17 +82,11 @@ def load_into_db(df):
     valid_cols = [c for c in target_cols if c in df.columns]
     df = df[valid_cols]
 
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    schema_path = os.path.join(current_dir, "../dags/sql/salary_schema.sql")
-
     try:
         with conn.cursor() as cur:
             if df.empty:
                 logger.warning("Dataframe is empty, skipping load.")
                 return
-
-            with open(schema_path, "r") as f:
-                cur.execute(f.read())
 
             csv_buffer = io.StringIO()
             df.to_csv(csv_buffer, index=False, header=False)
@@ -61,22 +97,35 @@ def load_into_db(df):
             cur.copy_expert(sql, csv_buffer)
 
             conn.commit()
-            logger.info("Data loaded successfully.")
+            logger.info(f"Data loaded successfully. Rows: {len(df)}")
 
     except Exception as e:
         logger.exception(f"Database load failed: {e}")
-        conn.rollback()
+        if conn and not conn.closed:
+            conn.rollback()
     finally:
-        conn.close()
+        if conn and not conn.closed:
+            conn.close()
+
+
+def _is_valid_value(v):
+    """Check if a value is valid for JSON serialization."""
+    if pd.isna(v):
+        return False
+    if isinstance(v, float) and np.isnan(v):
+        return False
+    if isinstance(v, (float, int)) and not np.isfinite(v):
+        return False
+    return True
 
 
 def load_errors(bad_df, reason="Validation Failed"):
-    logger = logging.getLogger(__name__)
     conn = get_connection()
 
     if bad_df.empty:
         logger.info("No errors to report.")
-        conn.close()
+        if conn and not conn.closed:
+            conn.close()
         return
 
     has_reason_column = 'drop_reason' in bad_df.columns
@@ -85,7 +134,12 @@ def load_errors(bad_df, reason="Validation Failed"):
         with conn.cursor() as cur:
             data_values = []
 
-            for _, row in bad_df.iterrows():
+            temp_df = bad_df.copy(deep=True)
+
+            for col in temp_df.select_dtypes(include=['datetime64', 'datetime64[ns]']).columns:
+                temp_df[col] = temp_df[col].astype(str)
+
+            for _, row in temp_df.iterrows():
                 if has_reason_column:
                     error_reason = row['drop_reason']
                     payload_data = row.drop(labels=['drop_reason'])
@@ -93,7 +147,16 @@ def load_errors(bad_df, reason="Validation Failed"):
                     error_reason = reason
                     payload_data = row
 
-                row_json = payload_data.to_json()
+                row_dict = payload_data.to_dict()
+
+                cleaned_dict = {}
+                for k, v in row_dict.items():
+                    if _is_valid_value(v):
+                        cleaned_dict[k] = v
+                    else:
+                        cleaned_dict[k] = None
+
+                row_json = json.dumps(cleaned_dict)
                 data_values.append((row_json, error_reason))
 
             insert_query = "INSERT INTO salary_errors (payload, reason) VALUES (%s, %s)"
@@ -104,6 +167,8 @@ def load_errors(bad_df, reason="Validation Failed"):
 
     except Exception as e:
         logger.exception(f"Failed to load errors: {e}")
-        conn.rollback()
+        if conn and not conn.closed:
+            conn.rollback()
     finally:
-        conn.close()
+        if conn and not conn.closed:
+            conn.close()

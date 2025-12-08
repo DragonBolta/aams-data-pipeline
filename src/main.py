@@ -1,4 +1,6 @@
 import argparse
+
+from src.load import setup_db_schema
 from src.readers.csv_reader import read_csv
 from src.etl import etl
 
@@ -15,6 +17,8 @@ def main():
         help="The path to the CSV file to be processed.\n"
              "Defaults to: ../data/Ask A Manager Salary Survey 2021 (Responses) - Form Responses 1.csv"
     )
+
+    setup_db_schema()
 
     args = parser.parse_args()
     filepath = args.filepath
