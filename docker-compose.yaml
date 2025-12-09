@@ -11,7 +11,7 @@ services:
       - db_password
 
   etl:
-    image: alvin1212/aams-etl:v1.0
+    image: alvin1212/aams-etl:v1.2
     environment:
       POSTGRES_USER: etl_user
       POSTGRES_DB: etl_db
@@ -56,7 +56,7 @@ services:
     command: [
               "--config", "/home/config.json",
               "--watch",
-              "--sample", "200"]
+              "--sample", "20"]
 
 configs:
   shadowtraffic_config:

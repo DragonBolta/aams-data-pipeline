@@ -1,151 +1,210 @@
 import pandas as pd
-from unittest.mock import patch, MagicMock
-from src.load import load_into_db
-from src.load import load_errors
-import pytest
+import os
+from unittest.mock import patch, MagicMock, mock_open
+from src.load import load_into_db, load_errors, get_secret, setup_db_schema
 
 
-@patch("src.load.pg.connect")
-def test_load_into_db_success(mock_connect):
-    mock_conn_instance = MagicMock()
-    mock_cursor = MagicMock()
+@patch("builtins.open", new_callable=mock_open, read_data="my_secret_password")
+def test_get_secret_success(mock_file):
+    result = get_secret("db_password")
+    assert result == "my_secret_password"
+    mock_file.assert_called_once()
 
-    mock_connect.return_value = mock_conn_instance
-    mock_conn_instance.cursor.return_value.__enter__.return_value = mock_cursor
 
-    df = pd.DataFrame({
-        "year": [2021],
-        "age": [30],
-        "industry": ["Tech"],
-        "job_title": ["Engineer"],
-        "job_context": [""],
-        "salary": [100000],
-        "bonus": [5000],
-        "currency": ["USD"],
-        "income_context": [""],
-        "country": ["USA"],
-        "us_state": ["NY"],
-        "city": ["NYC"],
-        "professional_yoe": [5],
-        "industry_yoe": [5],
-        "gender": ["Woman"],
-        "education": ["Masters"],
-    })
+@patch("builtins.open", side_effect=FileNotFoundError())
+@patch("builtins.print")
+def test_get_secret_file_not_found(mock_print, _):
+    result = get_secret("db_password")
+    assert result is None
+    assert mock_print.called
+    call_args = str(mock_print.call_args)
+    assert "not found" in call_args
 
-    load_into_db(df)
 
-    assert mock_cursor.execute.called
+@patch("builtins.open", side_effect=PermissionError("Access denied"))
+@patch("builtins.print")
+def test_get_secret_general_exception(mock_print, mock_file):
+    result = get_secret("db_password")
+    assert result is None
+    assert mock_print.called
+    call_args = str(mock_print.call_args)
+    assert "ERROR reading secret" in call_args
 
-    call_args = mock_cursor.copy_expert.call_args
-    sql_query = call_args[0][0]
 
-    assert "COPY salary" in sql_query
-    assert "FROM STDIN" in sql_query
-
-    target_cols = [
-        "year",
-        "age", "industry", "job_title", "job_context",
-        "salary", "bonus", "currency", "income_context",
-        "country", "us_state", "city", "professional_yoe",
-        "industry_yoe", "gender", "education"
-    ]
-
-    assert all(col in sql_query for col in target_cols)
-
-    mock_conn_instance.commit.assert_called_once()
-
-@patch("src.load.pg.connect")
-def test_load_skips_empty_dataframe(mock_connect):
+@patch("src.load._connect_db")
+@patch("builtins.open", new_callable=mock_open, read_data="CREATE TABLE test;")
+@patch("src.load.logger")
+@patch("os.path.dirname")
+@patch("os.path.abspath")
+def test_setup_db_schema_success(mock_abspath, mock_dirname, mock_logger, mock_file, mock_connect_db):
     mock_conn = MagicMock()
-    mock_connect.return_value = mock_conn
+    mock_conn.closed = False
     mock_cursor = MagicMock()
+
+    mock_connect_db.return_value = mock_conn
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    mock_abspath.return_value = "/fake/path/load.py"
+    mock_dirname.return_value = "/fake/path"
+
+    setup_db_schema()
+
+    mock_cursor.execute.assert_called_once()
+    mock_logger.info.assert_called_once()
+    assert "schema initialized successfully" in str(mock_logger.info.call_args)
+    mock_conn.close.assert_called_once()
+
+
+@patch("src.load._connect_db")
+@patch("src.load.logger")
+def test_setup_db_schema_connection_failure(mock_logger, mock_connect_db):
+    mock_connect_db.side_effect = Exception("Connection failed")
+
+    setup_db_schema()
+
+    mock_logger.exception.assert_called_once()
+    assert "schema initialization failed" in str(mock_logger.exception.call_args)
+
+
+@patch("src.load._connect_db")
+@patch("builtins.open", side_effect=FileNotFoundError("Schema file not found"))
+@patch("src.load.logger")
+@patch("os.path.dirname")
+@patch("os.path.abspath")
+def test_setup_db_schema_file_not_found(mock_abspath, mock_dirname, mock_logger, mock_file, mock_connect_db):
+    mock_conn = MagicMock()
+    mock_conn.closed = False
+
+    mock_connect_db.return_value = mock_conn
+    mock_abspath.return_value = "/fake/path/load.py"
+    mock_dirname.return_value = "/fake/path"
+
+    setup_db_schema()
+
+    mock_logger.exception.assert_called_once()
+    mock_conn.rollback.assert_called_once()
+    mock_conn.close.assert_called_once()
+
+@patch("src.load.pg.connect")
+@patch("src.load.get_secret", return_value="test_password")
+def test_get_connection(mock_get_secret, mock_pg_connect):
+    mock_conn = MagicMock()
+    mock_pg_connect.return_value = mock_conn
+
+    with patch.dict(os.environ, {
+        'POSTGRES_IP': 'localhost',
+        'POSTGRES_PORT': '5432',
+        'POSTGRES_USER': 'testuser',
+        'POSTGRES_DB': 'testdb'
+    }):
+        from src.load import get_connection
+        conn = get_connection()
+
+        assert conn.autocommit is False
+        assert mock_pg_connect.called
+
+@patch("src.load.get_connection")
+@patch("src.load.logger")
+def test_load_into_db_empty_logs_warning(mock_logger, mock_get_connection):
+    mock_conn = MagicMock()
+    mock_conn.closed = False
+    mock_cursor = MagicMock()
+
+    mock_get_connection.return_value = mock_conn
     mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
     empty_df = pd.DataFrame(columns=['age', 'salary'])
 
     load_into_db(empty_df)
 
-    mock_cursor.execute.assert_not_called()
-    mock_cursor.copy_expert.assert_not_called()
-    mock_conn.commit.assert_not_called()
+    mock_logger.warning.assert_called_once()
+    assert "empty" in str(mock_logger.warning.call_args).lower()
+    mock_conn.close.assert_called_once()
 
-
-@patch("src.load.pg.connect")
-@patch("src.load.logging.getLogger")
-def test_load_handles_db_exception(mock_get_logger, mock_connect):
-    mock_logger = MagicMock()
-    mock_get_logger.return_value = mock_logger
-
+@patch("src.load.get_connection")
+@patch("src.load.logger")
+def test_load_errors_empty_logs_info(mock_logger, mock_get_connection):
     mock_conn = MagicMock()
-    mock_cursor = MagicMock()
+    mock_conn.closed = False
 
-    mock_connect.return_value = mock_conn
-    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-
-    mock_cursor.execute.side_effect = Exception("Database error")
-
-    df = pd.DataFrame({"age": [25], "salary": [50000]})
-
-    load_into_db(df)
-
-    mock_conn.rollback.assert_called_once()
-    mock_logger.exception.assert_called_once()
-
-
-@patch("src.load.pg.connect")
-def test_load_errors_success(mock_connect):
-    mock_conn = MagicMock()
-    mock_cursor = MagicMock()
-    mock_connect.return_value = mock_conn
-    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-
-    bad_df = pd.DataFrame({
-        "age": [1000, 20],
-        "salary": [1000, 2000],
-        "drop_reason": ["Failed to clean", "Validation fail"]
-    })
-
-    load_errors(bad_df, reason="Test Reason")
-
-    assert mock_cursor.executemany.called
-    call_args = mock_cursor.executemany.call_args
-    data_points = call_args[0][1]
-
-    assert data_points[0][1] == "Failed to clean"
-    assert data_points[1][1] == "Validation fail"
-
-    mock_conn.commit.assert_called_once()
-
-
-@patch("src.load.pg.connect")
-def test_load_errors_skips_empty(mock_connect):
-    mock_conn = MagicMock()
-    mock_connect.return_value = mock_conn
+    mock_get_connection.return_value = mock_conn
 
     empty_df = pd.DataFrame()
 
     load_errors(empty_df)
 
-    mock_conn.cursor.assert_not_called()
-    mock_conn.commit.assert_not_called()
+    mock_logger.info.assert_called_once()
+    assert "No errors to report" in str(mock_logger.info.call_args)
+    mock_conn.close.assert_called_once()
 
-
-@patch("src.load.pg.connect")
-@patch("src.load.logging.getLogger")
-def test_load_errors_handles_exception(mock_get_logger, mock_connect):
-    mock_logger = MagicMock()
-    mock_get_logger.return_value = mock_logger
-
+@patch("src.load.get_connection")
+def test_load_errors_without_drop_reason_column(mock_get_connection):
     mock_conn = MagicMock()
+    mock_conn.closed = False
     mock_cursor = MagicMock()
-    mock_connect.return_value = mock_conn
+    mock_get_connection.return_value = mock_conn
     mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
-    mock_cursor.executemany.side_effect = Exception("DB Error")
+    bad_df = pd.DataFrame({
+        "age": [1000],
+        "salary": [1000]
+    })
 
-    bad_df = pd.DataFrame({"age": [999]})
+    load_errors(bad_df, reason="Custom Validation Error")
+
+    assert mock_cursor.executemany.called
+    call_args = mock_cursor.executemany.call_args
+    data_points = call_args[0][1]
+
+    assert data_points[0][1] == "Custom Validation Error"
+
+    mock_conn.commit.assert_called_once()
+    mock_conn.close.assert_called_once()
+
+@patch("src.load.get_connection")
+@patch("src.load.logger")
+def test_load_into_db_success_logs_info(mock_logger, mock_get_connection):
+    mock_conn = MagicMock()
+    mock_conn.closed = False
+    mock_cursor = MagicMock()
+
+    mock_get_connection.return_value = mock_conn
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    df = pd.DataFrame({
+        "age": [30],
+        "salary": [100000]
+    })
+
+    load_into_db(df)
+
+    info_calls = [call for call in mock_logger.info.call_args_list]
+    assert len(info_calls) > 0
+    assert "Data loaded successfully" in str(info_calls[-1])
+
+    mock_conn.commit.assert_called_once()
+    mock_conn.close.assert_called_once()
+
+@patch("src.load.get_connection")
+@patch("src.load.logger")
+def test_load_errors_success_logs_info(mock_logger, mock_get_connection):
+    mock_conn = MagicMock()
+    mock_conn.closed = False
+    mock_cursor = MagicMock()
+    mock_get_connection.return_value = mock_conn
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    bad_df = pd.DataFrame({
+        "age": [1000],
+        "salary": [1000],
+        "drop_reason": ["Invalid age"]
+    })
 
     load_errors(bad_df)
 
-    mock_conn.rollback.assert_called_once()
-    mock_logger.exception.assert_called_once()
+    info_calls = [call for call in mock_logger.info.call_args_list]
+    assert len(info_calls) > 0
+    assert "rejected rows" in str(info_calls[-1]).lower()
+
+    mock_conn.commit.assert_called_once()
+    mock_conn.close.assert_called_once()

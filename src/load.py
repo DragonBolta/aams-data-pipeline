@@ -76,7 +76,7 @@ def load_into_db(df):
         "age", "industry", "job_title", "job_context",
         "salary", "bonus", "currency", "income_context",
         "country", "us_state", "city", "professional_yoe",
-        "industry_yoe", "gender", "education"
+        "industry_yoe", "gender", "education", "other_currency", "race"
     ]
 
     valid_cols = [c for c in target_cols if c in df.columns]
@@ -139,20 +139,26 @@ def load_errors(bad_df, reason="Validation Failed"):
             for col in temp_df.select_dtypes(include=['datetime64', 'datetime64[ns]']).columns:
                 temp_df[col] = temp_df[col].astype(str)
 
-            for _, row in temp_df.iterrows():
+            data_values = []
+
+            print(temp_df.columns)
+
+            for row in temp_df.itertuples():
+                print(row)
+                row_dict = {k: v for k, v in row._asdict().items() if k != 'Index'}
+
                 if has_reason_column:
-                    error_reason = row['drop_reason']
-                    payload_data = row.drop(labels=['drop_reason'])
+                    error_reason = row_dict['drop_reason']
+
+                    payload_data = {k: v for k, v in row_dict.items() if k != 'drop_reason'}
                 else:
                     error_reason = reason
-                    payload_data = row
-
-                row_dict = payload_data.to_dict()
+                    payload_data = row_dict
 
                 cleaned_dict = {}
-                for k, v in row_dict.items():
+                for k, v in payload_data.items():
                     if _is_valid_value(v):
-                        cleaned_dict[k] = v
+                        cleaned_dict[k] = str(v)
                     else:
                         cleaned_dict[k] = None
 

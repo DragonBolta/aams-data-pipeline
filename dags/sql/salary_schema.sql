@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS salary (
     salary INT,
     bonus INT,
     currency VARCHAR(7),
+    other_currency VARCHAR(50),
     income_context VARCHAR(100),
     country VARCHAR(3),
     us_state VARCHAR(27),
@@ -14,7 +15,8 @@ CREATE TABLE IF NOT EXISTS salary (
     gender varchar(30),
     professional_yoe INT,
     industry_yoe INT,
-    education varchar(40)
+    education varchar(40),
+    race varchar(100)
 );
 
 -- CREATE TABLE IF NOT EXISTS countries (

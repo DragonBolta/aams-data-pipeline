@@ -25,6 +25,7 @@ def clean(df):
         "What is your annual salary? (You'll indicate the currency in a later question. If you are part-time or hourly, please enter an annualized equivalent -- what you would earn if you worked the job 40 hours a week, 52 weeks a year.)": "salary",
         "How much additional monetary compensation do you get, if any (for example, bonuses or overtime in an average year)? Please only include monetary compensation here, not the value of benefits.": "bonus",
         "Please indicate the currency": "currency",
+        "If \"Other,\" please indicate the currency here: ": "other_currency",
         "If your income needs additional context, please provide it here:": "income_context",
         "What country do you work in?": "country",
         "If you're in the U.S., what state do you work in?": "us_state",
