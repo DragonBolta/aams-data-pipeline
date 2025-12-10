@@ -15,18 +15,24 @@ def get_secret(secret_name):
         with open(secret_path, 'r') as f:
             return f.read().strip()
     except FileNotFoundError:
-        print(f"ERROR: Docker secret '{secret_name}' not found at {secret_path}")
-        return None
+        logger.exception(f"ERROR: Docker secret '{secret_name}' not found at {secret_path}")
+        raise FileNotFoundError
     except Exception as e:
-        print(f"ERROR reading secret '{secret_name}': {e}")
-        return None
+        logger.exception(f"ERROR reading secret '{secret_name}': {e}")
+        raise e
 
 
 pg_ip = os.getenv("POSTGRES_IP")
 pg_port = os.getenv("POSTGRES_PORT")
 pg_user = os.getenv("POSTGRES_USER")
 pg_db = os.getenv("POSTGRES_DB")
-pg_pw = get_secret("db_password")
+pg_pw = None
+try:
+    pg_pw = get_secret("db_password")
+except FileNotFoundError as e:
+    logger.info("Failed to get secret, attempting to get database password from environment variables")
+if not pg_pw:
+    pg_pw = os.getenv("POSTGRES_PASSWORD")
 
 
 def _connect_db():
@@ -132,19 +138,13 @@ def load_errors(bad_df, reason="Validation Failed"):
 
     try:
         with conn.cursor() as cur:
-            data_values = []
-
             temp_df = bad_df.copy(deep=True)
 
             for col in temp_df.select_dtypes(include=['datetime64', 'datetime64[ns]']).columns:
                 temp_df[col] = temp_df[col].astype(str)
 
             data_values = []
-
-            print(temp_df.columns)
-
             for row in temp_df.itertuples():
-                print(row)
                 row_dict = {k: v for k, v in row._asdict().items() if k != 'Index'}
 
                 if has_reason_column:
@@ -157,10 +157,13 @@ def load_errors(bad_df, reason="Validation Failed"):
 
                 cleaned_dict = {}
                 for k, v in payload_data.items():
-                    if _is_valid_value(v):
-                        cleaned_dict[k] = str(v)
-                    else:
-                        cleaned_dict[k] = None
+                    try:
+                        if _is_valid_value(v):
+                            cleaned_dict[k] = str(v)
+                        else:
+                            cleaned_dict[k] = None
+                    except:
+                        print(payload_data)
 
                 row_json = json.dumps(cleaned_dict)
                 data_values.append((row_json, error_reason))

@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS salary (
     professional_yoe INT,
     industry_yoe INT,
     education varchar(40),
-    race varchar(100)
+    race varchar(255)
 );
 
 -- CREATE TABLE IF NOT EXISTS countries (

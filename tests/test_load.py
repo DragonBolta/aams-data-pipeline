@@ -23,7 +23,7 @@ def test_get_secret_file_not_found(mock_print, _):
 
 @patch("builtins.open", side_effect=PermissionError("Access denied"))
 @patch("builtins.print")
-def test_get_secret_general_exception(mock_print, mock_file):
+def test_get_secret_general_exception(mock_print, _):
     result = get_secret("db_password")
     assert result is None
     assert mock_print.called

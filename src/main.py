@@ -1,5 +1,7 @@
 import argparse
 
+from dotenv import load_dotenv
+
 from src.load import setup_db_schema
 from src.readers.csv_reader import read_csv
 from src.etl import etl

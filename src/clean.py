@@ -39,27 +39,30 @@ def clean(df):
     df = df.rename(columns=rename_columns)
 
     cc = coco.CountryConverter()
-    df['country'] = cc.pandas_convert(series=df['country'], to='ISO3', not_found=np.nan)
+    df['country'] = cc.pandas_convert(series=df['country'], to='ISO3', not_found=np.nan)[0]
 
     country_fail_mask = df['country'].isna()
     df.loc[country_fail_mask & df['drop_reason'].isna(), 'drop_reason'] = 'Country Conversion Failed (ISO3=NaN)'
 
     education_fail_mask = df['education'].isna()
-    df.loc[education_fail_mask & df['drop_reason'].isna(), 'drop_reason'] = 'Missing Education (dropna)'
+    df.loc[education_fail_mask, 'education'] = 'None'
 
     yoe_cols = ['professional_yoe', 'industry_yoe']
     yoe_bands = {
-        '1 year or less': 0,
-        '2 - 4 years': 2,
-        '5 - 7 years': 5,
-        '8 - 10 years': 8,
-        '11 - 20 years': 11,
-        '21 - 30 years': 21
+        '': 0,
+        '1yearorless': 0,
+        '2-4years': 2,
+        '5-7years': 5,
+        '8-10years': 8,
+        '11-20years': 11,
+        '21-30years': 21,
+        '31-40years': 31,
+        '41yearsormore': 41
     }
 
     for col in yoe_cols:
         original_values = df[col].copy()
-        df[col] = original_values.map(yoe_bands)
+        df[col] = original_values.str.replace(" ", "").map(yoe_bands)
 
         yoe_fail_mask = df[col].isna() & original_values.notna()
 

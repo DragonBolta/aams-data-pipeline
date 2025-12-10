@@ -109,6 +109,10 @@ def validate(df):
         gx.expectations.ExpectColumnValuesToNotBeNull(column="industry_yoe")
     )
 
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValueLengthsToBeBetween(column="other_currency", min_value=0, max_value=50)
+    )
+
     validation_results = batch.validate(suite, result_format={"result_format": "COMPLETE"})
 
     unexpected_indices = set()
