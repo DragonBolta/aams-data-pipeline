@@ -1,5 +1,7 @@
 import logging
 import great_expectations as gx
+from great_expectations.expectations.row_conditions import Column
+
 
 def validate(df):
     log = logging.getLogger(__name__)
@@ -110,6 +112,22 @@ def validate(df):
     suite.add_expectation(
         gx.expectations.ExpectColumnValueLengthsToBeBetween(column="other_currency", min_value=0, max_value=50)
     )
+
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToNotBeNull(column="city")
+    )
+
+    not_in_us_condition = Column("country") != "USA"
+
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToBeNull(column="us_state", row_condition=not_in_us_condition)
+    )
+
+    # in_us_condition = Column("country") == "USA"
+    #
+    # suite.add_expectation(
+    #     gx.expectations.ExpectColumnValuesToNotBeNull(column="us_state", row_condition=in_us_condition)
+    # )
 
     validation_results = batch.validate(suite, result_format={"result_format": "COMPLETE"})
 
