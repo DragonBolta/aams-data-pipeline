@@ -6,48 +6,49 @@ The pipeline ensures high data quality by performing comprehensive transformatio
 
 ## 🌟 Features
 
-### 1. Robust Data Ingestion & Cleaning
+### 1. Pipeline Architecture & Ingestion
+* **Streaming Mode (Primary)**: The primary execution model is a Kafka Consumer that continuously reads single-row JSON messages from a designated Kafka topic. The consumer is fault-tolerant, designed to check for PostgreSQL database readiness and table existence before starting to process messages.
 
-Multi-Format Ingestion: Supports reading data from both CSV and JSON sources.
+* **Batch Mode (Utility)**: A standalone Python script (src/main.py) remains available for one-off batch processing of local CSV files.
 
-Data Normalization: Converts raw survey fields (like salary and bonus) into clean numeric integers by stripping currency symbols and handling "under 18" age values.
+* **Multi-Format Ingestion**: Supports reading data from both CSV (for batch) and JSON (for streaming) sources.
 
-Geographic Standardization:
+### 2. Robust Data Cleaning
+* **Data Normalization**: Converts raw survey fields (like salary and bonus) into clean numeric integers, handles "under 18" age values, and maps categorical years of experience bands (e.g., '5-7 years') to numeric integer values (e.g., 5) for consistent storage.
 
-Normalizes country names to the ISO3 format using country_converter.
+* **Geographic Standardization**: Normalizes country names to the ISO3 format and standardizes US state names/abbreviations.
 
-Standardizes US state names/abbreviations using the us library.
+* **Demographic Data**: Includes ingestion and cleaning logic for demographic fields like gender, education, race, and yoe.
 
-Demographic Data: Includes ingestion and cleaning logic for demographic fields like gender, education, race, and yoe (Years of Experience).
+### 3. Strict Data Validation
+* **Great Expectations**: Utilizes Great Expectations for declarative data quality checks.
 
-### 2. Strict Data Validation
+* **Schema & Business Rules**: 
+  
+  * Enforces checks for:
 
-Great Expectations: Utilizes Great Expectations for declarative data quality checks.
+      * Non-null values on critical fields, now including job_title, salary, industry, professional_yoe, and industry_yoe.
 
-Schema & Business Rules: Enforces checks for:
+      * Valid salary and age ranges.
 
-Non-null values on critical fields like job_title and salary.
+      * Character length restrictions to prevent database truncation, including a specific check for the other_currency field.
 
-Valid salary and age ranges.
+### 4. Loading & Error Handling
+* **High-Performance Loading**: Loads valid, cleaned data into the target PostgreSQL database using the COPY command via psycopg2's copy_expert.
 
-Character length restrictions to prevent database truncation based on the SQL schema defined in salary_schema.sql.
+* **Dedicated Error Table**: All rejected rows (from both the clean and validate steps) are captured and saved to the dedicated salary_errors PostgreSQL table.
 
-### 3. Loading & Error Handling
+* **Error Logging**: Invalid rows are saved as a JSONB payload along with a detailed reason for rejection. The cleaning step captures specific failure reasons, including invalid country codes, missing or invalid timestamps/year, and unmappable YOE values.
 
-High-Performance Loading: Loads valid, cleaned data into the target PostgreSQL database using the COPY command via psycopg2's copy_expert.
+## 🛠️ Technology Stack
 
-Dedicated Error Table: All rejected rows (from both the clean and validate steps) are captured and saved to the dedicated salary_errors PostgreSQL table.
-
-Error Logging: Invalid rows are saved as a JSONB payload along with a detailed reason for rejection, enabling easy auditing and debugging.
-
-🛠️ Technology Stack
-
-| Component       | Technology | Role |
-|:----------------| :--- | :--- |
-| Data Processing | Python, Pandas | Core ETL logic, transformation, and data manipulation |
-| Data Quality    | Great Expectations | Data validation and quality assurance |
-| Database        | PostgreSQL, psycopg2 | Target database for storing clean and rejected records |
-| Libraries       | country_converter, us | Geographic data standardization |
+| Component       | Technology                 | Role                                                   |
+|:----------------|:---------------------------|:-------------------------------------------------------|
+| Data Processing | Python, Pandas             | Core ETL logic, transformation, and data manipulation  |
+| Data Quality    | Great Expectations         | Data validation and quality assurance                  |
+| Database        | PostgreSQL, psycopg2       | Target database for storing clean and rejected records |
+| Messaging       | Apache Kafka, kafka-python | Decoupled data ingestion and real-time streaming       |
+| Libraries       | country_converter, us      | Geographic data standardization                        |
 
 ## 📁 Project Structure
 ```
@@ -82,53 +83,76 @@ aams-data-pipeline/
 
 ## 🚀 Local Setup and Execution
 
-### Prerequisites
+### Crucial Note on Dependencies: 
 
+The dependencies listed below are only required if you intend to run the **Batch Mode** script (src/main.py) or **Unit Tests** directly on your host machine for development. The **Streaming Mode (Docker Compose)** uses a container image that has all necessary dependencies already installed.
 
-PostgreSQL Server: Must be running and accessible (locally or remotely).
+### 1. Streaming Mode (Docker Compose)
 
-Python Environment (3.8+): For running the ETL scripts.
+The primary way to run the pipeline is via Docker Compose, which sets up the PostgreSQL database, Kafka broker, and the ETL consumer.
 
-### 1. Install Dependencies
+#### Prerequisites
 
-Create and activate a virtual environment, then install the required Python packages:
+* Docker and Docker Compose must be installed.
+    
+#### Setup
 
-```pip install -r requirements.txt```
+* Prepare Secrets: Create a file named db_password.txt in the root directory (where docker-compose.yaml is located) and place your desired PostgreSQL password inside.
+    
+#### Execution
 
+* This will build the ETL consumer image (if necessary) and start the entire stack. The consumer will automatically wait for the database to be ready and create the necessary tables before connecting to Kafka.
 
-### 2. Environment Configuration
+  ```bash 
+  docker-compose up --build
+  ```
 
-Create a file named .env in the root directory and configure the database connection details:
+### 2. Batch Mode (Local Python)
 
-### .env file content (Example values for a local database instance)
-PG_IP=localhost
-PG_PORT=5432
-PG_USER=aams_user
-PG_PASSWORD=secure_password
-PG_DB=aams_db
+This is the original execution mode for loading single CSV files directly using a Python environment on your host machine.
 
+#### Prerequisites
 
-### 3. Database Setup
+* PostgreSQL Server: Must be running and accessible (locally or remotely).
 
-The ETL pipeline is configured to automatically create the necessary salary_data and salary_errors tables on its first execution using the schema defined in sql/salary_schema.sql.
+* Python Environment (3.8+).
 
-Action Required: Ensure the target database (aams_db in the example above) exists.
+#### Setup
 
-### 4. Local Script Execution
+1. **Install Dependencies**: Create and activate a virtual environment, then install the required Python packages:
 
-Place your raw data file (e.g., Ask A Manager Salary Survey 2021 (Responses) - Form Responses 1.csv) into the data/ folder.
+```bash
+   pip install -r requirements.txt
+```
 
-Run the main script. You can use the default file path or specify a custom one:
+2. **Environment Configuration**: Create a file named .env in the root directory and configure the database connection details:
 
-#### Using the default file path
-```python src/main.py```
+```
+# .env file content (Example values for a local database instance)
+POSTGRES_IP=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=secure_password # Placeholder for your password
+POSTGRES_DB=salary
+POSTGRES_TABLE=salary
+```
 
-#### Specifying a custom file path
-```python src/main.py data/my_custom_survey.csv```
+#### Execution
 
+Place your raw data file (e.g., Ask A Manager Salary Survey 2021 (Responses) - Form Responses 1.csv) into the data/ folder. Run the main script. This will set up the schema and run the ETL once on the specified file:
 
-### 5. Running Tests
+```bash
+# Using the default file path
+python src/main.py
 
-Run unit tests using pytest to verify ETL component functionality:
+# Specifying a custom file path
+python src/main.py data/my_custom_survey.csv
+```
 
-```pytest```
+### 3. Running Tests
+
+Run unit tests using pytest to verify ETL component functionality on your local machine. This requires the local dependencies installed in Step 2.1.
+
+```bash
+pytest
+```

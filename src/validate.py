@@ -1,7 +1,5 @@
 import logging
 import great_expectations as gx
-import pandas as pd
-
 
 def validate(df):
     log = logging.getLogger(__name__)
@@ -115,19 +113,35 @@ def validate(df):
 
     validation_results = batch.validate(suite, result_format={"result_format": "COMPLETE"})
 
-    unexpected_indices = set()
+    index_to_reasons = {}
 
     for result in validation_results.results:
         if not result.success:
             indices = result.result.get("unexpected_index_list", [])
-            unexpected_indices.update(indices)
+
+            expectation_type = result.expectation_config.type
+
+            column_name = result.expectation_config.kwargs.get("column", "N/A")
+
+            fail_reason = f"{expectation_type} on column '{column_name}'"
+
             log.warning(
-                f"Expectation '{result.expectation_config.type}' on column '{result.expectation_config.kwargs.get('column')}' failed on {len(indices)} rows.")
+                f"Expectation '{expectation_type}' on column '{column_name}' failed on {len(indices)} rows."
+            )
 
-    bad_index_list = list(unexpected_indices)
+            for index in indices:
+                df_index = df.index[index]
 
-    bad_rows = df.iloc[bad_index_list]
+                if df_index not in index_to_reasons:
+                    index_to_reasons[df_index] = []
+                index_to_reasons[df_index].append(fail_reason)
+
+    bad_index_list = list(index_to_reasons.keys())
+
     good_rows = df.drop(index=bad_index_list)
+    bad_rows = df.loc[bad_index_list].copy()
+
+    bad_rows['drop_reason'] = bad_rows.index.map(lambda idx: ' | '.join(index_to_reasons.get(idx, [])))
 
     print(f"Total rows processed: {len(df)}")
     print(f"Good rows: {len(good_rows)}")
