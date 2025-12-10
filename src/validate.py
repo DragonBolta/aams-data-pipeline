@@ -1,3 +1,4 @@
+import datetime
 import logging
 import great_expectations as gx
 from great_expectations.expectations.row_conditions import Column
@@ -24,6 +25,7 @@ def validate(df):
         "industry": {"type": "object", "max_len": 50},
         "job_title": {"type": "object", "max_len": 100},
         "currency": {"type": "object", "max_len": 7},
+        "other_currency": {"type": "object", "max_len": 50},
         "income_context": {"type": "object", "max_len": 100},
         "country": {"type": "object", "max_len": 3},
         "us_state": {"type": "object", "max_len": 27},
@@ -32,6 +34,8 @@ def validate(df):
         "age": {"type": "int64", "max_len": None},
         "salary": {"type": "int64", "max_len": None},
         "bonus": {"type": "int64", "max_len": None},
+        "education": {"type": "object", "max_len": 50},
+        "race": {"type": "object", "max_len": 100}
     }
 
     for col, rules in full_schema.items():
@@ -46,6 +50,10 @@ def validate(df):
                 gx.expectations.ExpectColumnValueLengthsToBeBetween(
                     column=col, min_value=0, max_value=rules["max_len"]
                 )
+            )
+        if rules["type"] == "int64":
+            suite.add_expectation(
+                gx.expectations.ExpectColumnValuesToBeBetween(column=col, min_value=0)
             )
 
     suite.add_expectation(
@@ -67,7 +75,7 @@ def validate(df):
         gx.expectations.ExpectColumnValuesToBeBetween(
             column="year",
             min_value=2015,
-            max_value=2030
+            max_value=datetime.datetime.now().year
         )
     )
 
@@ -107,10 +115,6 @@ def validate(df):
 
     suite.add_expectation(
         gx.expectations.ExpectColumnValuesToNotBeNull(column="industry_yoe")
-    )
-
-    suite.add_expectation(
-        gx.expectations.ExpectColumnValueLengthsToBeBetween(column="other_currency", min_value=0, max_value=50)
     )
 
     suite.add_expectation(
