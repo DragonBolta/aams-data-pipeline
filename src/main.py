@@ -1,12 +1,14 @@
 import argparse
 
-from dotenv import load_dotenv
+from pyspark.sql import SparkSession
 
 from src.load import setup_db_schema
 from src.readers.csv_reader import read_csv
 from src.etl import etl
 
 def main():
+    spark = SparkSession.builder.appName("aams spark").master("local[*]").getOrCreate()
+
     parser = argparse.ArgumentParser(
         description="ETL script to process salary survey data.",
         formatter_class=argparse.RawTextHelpFormatter
@@ -26,8 +28,8 @@ def main():
     filepath = args.filepath
 
     print(f"Reading CSV from: {filepath}")
-    df = read_csv(filepath=filepath)
-    etl(df)
+    df = read_csv(spark, filepath=filepath)
+    etl(spark, df)
 
 
 

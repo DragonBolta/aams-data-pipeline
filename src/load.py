@@ -128,7 +128,7 @@ def _is_valid_value(v):
 def load_errors(bad_df, reason="Validation Failed"):
     conn = get_connection()
 
-    if bad_df.empty:
+    if bad_df.isEmpty():
         logger.info("No errors to report.")
         if conn and not conn.closed:
             conn.close()

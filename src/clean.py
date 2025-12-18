@@ -1,20 +1,39 @@
-import pandas as pd
-import country_converter as coco
-import us
-import numpy as np
+from itertools import chain
+
+import pyspark.sql.types as types
+from pyspark.sql.functions import lit, create_map, udf, when, regexp_replace, trim, regexp_extract, initcap, upper, \
+    year, try_to_timestamp, coalesce
 
 
+@udf(returnType=types.StringType())
 def standardize_us_state(val):
     if not val:
         return None
-    state = us.states.lookup(str(val))
-    return state.abbr if state else val.upper()
+    try:
+        import us
+        state = us.states.lookup(str(val))
+        return state.abbr if state else str(val).upper()
+    except Exception:
+        return str(val).upper()
 
 
-def clean(df):
-    df = df.copy()
-    df['drop_reason'] = np.nan
-    df['drop_reason'] = df['drop_reason'].astype(object)
+@udf(returnType=types.StringType())
+def convert_country(country_name):
+    if not country_name:
+        return None
+
+    global _worker_cc
+    if '_worker_cc' not in globals():
+        import country_converter as coco
+        _worker_cc = coco.CountryConverter()
+
+    try:
+        return _worker_cc.convert(names=country_name, to="ISO3", not_found=None)
+    except Exception:
+        return None
+
+def clean(spark, df):
+    df = df.withColumn('drop_reason', lit(None).astype(types.StringType()))
 
     rename_columns = {
         "Timestamp": "response_timestamp",
@@ -36,16 +55,13 @@ def clean(df):
         'What is your race? (Choose all that apply.)': "race",
         'What is your gender?': "gender"
     }
-    df = df.rename(columns=rename_columns)
+    df = df.withColumnsRenamed(rename_columns)
 
-    cc = coco.CountryConverter()
-    df['country'] = cc.pandas_convert(series=df['country'], to='ISO3', not_found=np.nan)[0]
+    df = df.withColumn('country', convert_country(df.country))
 
-    country_fail_mask = df['country'].isna()
-    df.loc[country_fail_mask & df['drop_reason'].isna(), 'drop_reason'] = 'Country Conversion Failed (ISO3=NaN)'
+    df = df.withColumn('drop_reason', when(df.country.isNull(), 'Country Conversion Failed (ISO3=NaN)'))
 
-    education_fail_mask = df['education'].isna()
-    df.loc[education_fail_mask, 'education'] = 'None'
+    df = df.withColumn('education', when(df.education.isNull(), 'None'))
 
     yoe_cols = ['professional_yoe', 'industry_yoe']
     yoe_bands = {
@@ -60,54 +76,52 @@ def clean(df):
         '41yearsormore': 41
     }
 
+    yoe_mapping = create_map(*[lit(x) for x in chain(*yoe_bands.items())])
+
     for col in yoe_cols:
-        original_values = df[col].copy()
-        df[col] = original_values.str.replace(" ", "").map(yoe_bands)
-
-        yoe_fail_mask = df[col].isna() & original_values.notna()
-
-        df.loc[yoe_fail_mask & df['drop_reason'].isna(), 'drop_reason'] = f'Missing or Invalid {col} (dropna)'
-
-    df['professional_yoe'] = df['professional_yoe'].astype('Int64')
-    df['industry_yoe'] = df['industry_yoe'].astype('Int64')
+        df = df.withColumn(col, regexp_replace(df[col], " ", ""))
+        df = df.withColumn(col, yoe_mapping.getItem(df[col]).cast(types.IntegerType()))
+        # df = df.withColumn(col, when(column(col) == "", 0))
+        df = df.withColumn('drop_reason', when(df[col].isNull(), f'Missing or Invalid {col} (dropna)').cast(types.StringType()))
 
     if 'response_timestamp' in df.columns:
-        df['response_timestamp'] = pd.to_datetime(df['response_timestamp'], errors='coerce')
-        df['year'] = df['response_timestamp'].dt.year
-        df['year'] = df['year'].astype('Int64')
+        df = df.withColumn('response_timestamp', try_to_timestamp(df.response_timestamp, lit("M/d/yyyy H:m:s")))
+        df = df.withColumn('year', year(df.response_timestamp).cast(types.IntegerType()))
 
-        timestamp_fail_mask = df['response_timestamp'].isna()
-        df.loc[timestamp_fail_mask & df[
-            'drop_reason'].isna(), 'drop_reason'] = 'Missing or Invalid Timestamp/Year (dropna)'
+        df = df.withColumn('drop_reason',
+                           when(df.response_timestamp.isNull(), 'Missing or Invalid Timestamp/Year (dropna)'))
 
     else:
-        df['year'] = pd.Series([pd.NA] * len(df), dtype="Int64")
+        df = df.withColumn('year', lit(None))
 
     text_cols = ['industry', 'job_title', 'city', 'currency', 'income_context', 'us_state']
 
     for col in text_cols:
-        df[col] = df[col].astype(str).str.strip()
-        df[col] = df[col].replace({'nan': None, 'None': None, '': None})
+        df = df.withColumn(col, trim(df[col]).cast(types.StringType()))
+        # df = df.withColumn(col, when(df[col].isNull(), None))
+        none_mappings = {
+            'nan': None,
+            'None': None,
+            '': None
+        }
+        none_map_func = create_map(*[lit(x) for x in chain(*none_mappings.items())])
+        df = df.withColumn(col, coalesce(none_map_func.getItem(df[col]), df[col]))
 
-    df['job_title'] = df['job_title'].str.title()
-    df['city'] = df['city'].str.title()
-    df['currency'] = df['currency'].str.upper()
+    df = df.withColumn('job_title', initcap(df.job_title))
+    df = df.withColumn('city', initcap(df.city))
+    df = df.withColumn('currency', upper(df.currency))
 
     money_cols = ['salary', 'bonus']
     for col in money_cols:
-        df[col] = df[col].astype(str).str.replace(r'[$,]', '', regex=True)
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+        df = df.withColumn(col, df[col].cast(types.StringType()))
+        df = df.withColumn(col, regexp_replace(df[col], r'[$,]', '').cast(types.IntegerType()))
 
-    df['age'] = df['age'].replace("under 18", "17")
-    df['age'] = df['age'].astype(str).str.extract(r'^(\d+)').fillna(0).astype(int)
+    df = df.withColumn('age', regexp_replace(df.age, "under 18", "17"))
+    df = df.withColumn('age', regexp_extract(df.age, r'^(\d+)', 0))
 
-    df['us_state'] = df['us_state'].apply(standardize_us_state)
+    df = df.withColumn('us_state', standardize_us_state(df.us_state))
 
-    bad_rows = df[df['drop_reason'].notna()].copy()
-    good_rows = df[df['drop_reason'].isna()].copy()
-
-    good_rows = good_rows.drop(columns=['drop_reason'])
-
-    good_rows = good_rows.reset_index(drop=True)
+    bad_rows = df.where(~df.drop_reason.isNull())
+    good_rows = df.where(df.drop_reason.isNull()).drop('drop_reason')
 
     return good_rows, bad_rows
